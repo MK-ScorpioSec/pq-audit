@@ -1,0 +1,4 @@
+# pq-audit uses only Python standard library — no third-party dependencies required.
+# Optional: install development tools for testing
+# pytest>=7.0
+# bandit>=1.7

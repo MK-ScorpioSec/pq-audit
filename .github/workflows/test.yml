@@ -9,23 +9,25 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2f  # v5.3.0
-        with:
-          python-version: "3.11"
+      - name: Checkout
+        run: |
+          git clone "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" .
+          git checkout ${{ github.sha }}
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip3 install --upgrade pip --quiet
+          if [ -f requirements.txt ]; then pip3 install -r requirements.txt; fi
 
       - name: Run tests
         run: |
           if find . -name "test_*.py" | grep -q .; then
-            python -m pytest tests/ -v
+            python3 -m pytest tests/ -v
           else
             echo "No tests yet — skipping"
           fi
+
+      - name: Bandit SAST
+        run: |
+          pip3 install bandit --quiet
+          python3 -m bandit -r . -ll --exit-zero
