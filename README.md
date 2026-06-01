@@ -14,7 +14,7 @@ A multi-layer security audit framework that evaluates cryptographic posture, inf
 
 ## Overview
 
-`pq-audit` examines your stack across 9 layers and classifies findings into three risk tiers:
+`pq-audit` examines your stack across 10 layers and classifies findings into three risk tiers:
 
 | Risk | Meaning |
 |------|---------|
@@ -35,6 +35,7 @@ A multi-layer security audit framework that evaluates cryptographic posture, inf
 | `containers` | Dockerfile, docker-compose — base image crypto, env var leaks |
 | `api` | REST/gRPC endpoint responses — TLS version, header security, auth schemes |
 | `compliance` | Cross-layer gap analysis against NIST SP 800-131A, DORA, NIS2 |
+| `web3` | DeFi/blockchain off-chain components — ECDSA secp256k1, JWT ES256K, JSON-RPC endpoints, CBOM generation |
 
 ---
 

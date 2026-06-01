@@ -722,6 +722,213 @@ def audit_link_or_email(target):
     return findings
 
 
+# ─── Capa 10: WEB3 / DeFi ────────────────────────────────────────────────────
+# Immunefi-ready: audita endpoints off-chain de protocolos DeFi.
+# Scope: TLS/crypto en APIs, JWT algorithms, RPC endpoints, ECDSA en smart contracts.
+# NOTA: Solo ejecutar contra targets IN SCOPE del programa de bug bounty.
+#       No ejecutar contra contratos en mainnet sin autorización explícita.
+#       Immunefi acepta research con PoC; NO acepta scanner dumps.
+
+WEB3_QUANTUM_PATTERNS = {
+    # ECDSA/secp256k1 is quantum-vulnerable (Shor's algorithm breaks it)
+    "secp256k1": ("SNDL_VULNERABLE", "secp256k1 — ECDSA curve used in all Ethereum/Bitcoin. Quantum-vulnerable (CNSA 2.0: migrate by 2030)"),
+    "ecdsa_k1": ("SNDL_VULNERABLE", "ECDSA k1 — same as secp256k1"),
+    "secp256r1": ("SNDL_VULNERABLE", "secp256r1 (P-256) — NIST curve, quantum-vulnerable per CNSA 2.0"),
+    "keccak256": ("TRANSITION_REQUIRED", "Keccak-256 — used as hash in Ethereum. Quantum-resistant for collision, but vulnerable to Grover (preimage, 2^128 classical → 2^64 quantum)"),
+    "sha256_hmac": ("TRANSITION_REQUIRED", "HMAC-SHA256 — weakened by Grover's algorithm (128-bit → 64-bit quantum security)"),
+    "jwt_es256": ("SNDL_VULNERABLE", "JWT alg:ES256 (ECDSA P-256) — quantum-vulnerable signature algorithm in API auth"),
+    "jwt_es256k": ("SNDL_VULNERABLE", "JWT alg:ES256K (ECDSA secp256k1) — quantum-vulnerable, common in Web3 auth"),
+    "eth_sign": ("SNDL_VULNERABLE", "eth_sign / personal_sign — ECDSA signature scheme in Ethereum wallets"),
+    "ec_recover": ("SNDL_VULNERABLE", "ecrecover() — ECDSA recovery in smart contracts, quantum-vulnerable"),
+}
+
+
+def audit_web3_endpoint(host: str, port: int = 443, rpc_path: str = "/") -> list:
+    """
+    Capa WEB3: Audita endpoints off-chain de protocolos DeFi para vulnerabilidades
+    criptográficas cuánticas.
+
+    Checks:
+    1. TLS crypto (secp256r1 vs ML-KEM readiness)
+    2. JWT algorithm in API responses (ES256/ES256K = ECDSA = quantum-vulnerable)
+    3. JSON-RPC endpoint crypto exposure
+    4. API headers for crypto algorithm hints
+    5. CBOM generation (Cryptographic Bill of Materials)
+
+    Immunefi scope: off-chain APIs, bridges, web UIs, oracle endpoints.
+    NOT: direct on-chain calls or EVM bytecode (out of scope for this layer).
+    """
+    import urllib.request, urllib.error, ssl, socket, json as json_mod, datetime
+
+    findings = []
+    scheme = "https" if port in (443, 8443) else "http"
+    base_url = f"{scheme}://{host}:{port}{rpc_path}"
+
+    # 1. TLS crypto check (reuse audit_tls)
+    if scheme == "https":
+        tls_findings = audit_tls(host, port)
+        for f in tls_findings:
+            f["layer"] = "WEB3"
+            f["sub"] = "TLS"
+            f["immunefi_context"] = "Off-chain API TLS weakness — SNDL risk for long-lived data"
+        findings.extend(tls_findings)
+
+    # 2. Probe JSON-RPC (standard Ethereum RPC)
+    rpc_payloads = [
+        {"jsonrpc": "2.0", "method": "web3_clientVersion", "params": [], "id": 1},
+        {"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 2},
+        {"jsonrpc": "2.0", "method": "net_version", "params": [], "id": 3},
+    ]
+    for payload in rpc_payloads:
+        try:
+            data = json_mod.dumps(payload).encode()
+            req = urllib.request.Request(
+                base_url, data=data,
+                headers={"Content-Type": "application/json", "User-Agent": "pq-audit/1.0"},
+                method="POST"
+            )
+            ctx = ssl.create_default_context() if scheme == "https" else None
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
+                resp = json_mod.loads(r.read().decode("utf-8", errors="replace"))
+                # Check for Ethereum RPC exposure
+                if "result" in resp or "jsonrpc" in resp:
+                    findings.append({
+                        "layer": "WEB3", "sub": "JSON-RPC",
+                        "host": host, "endpoint": base_url,
+                        "method": payload["method"],
+                        "risk": "SNDL_VULNERABLE",
+                        "description": f"Ethereum JSON-RPC exposed: {payload['method']} → uses ECDSA secp256k1 (quantum-vulnerable)",
+                        "response_preview": str(resp.get("result", "?"))[:100],
+                        "immunefi_relevance": "Confirms blockchain node reachable. ECDSA signatures quantum-vulnerable per CNSA 2.0.",
+                        "remediation": "Plan migration to NIST PQC signature (ML-DSA/SLH-DSA) when EIPs support it. Monitor EIP-7000s.",
+                    })
+                    break
+        except Exception:
+            pass
+
+    # 3. Check API response headers for JWT algorithm hints
+    try:
+        req = urllib.request.Request(
+            base_url, headers={"User-Agent": "pq-audit/1.0"}
+        )
+        ctx = ssl.create_default_context() if scheme == "https" else None
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
+            headers = dict(r.headers)
+            body = r.read(4096).decode("utf-8", errors="replace")
+
+            # Check for ECDSA/secp256 mentions in response
+            for pattern, (risk, desc) in WEB3_QUANTUM_PATTERNS.items():
+                if pattern.lower() in body.lower() or pattern.lower() in str(headers).lower():
+                    findings.append({
+                        "layer": "WEB3", "sub": "API_RESPONSE",
+                        "host": host, "pattern": pattern,
+                        "risk": risk, "description": desc,
+                        "immunefi_relevance": "Detected in off-chain API response/headers",
+                    })
+
+            # Check for JWT in Authorization header or response
+            if "eyJ" in body:
+                # Decode JWT header to check algorithm
+                import base64
+                jwt_parts = [p for p in body.split() if p.startswith("eyJ")]
+                for jwt in jwt_parts[:3]:
+                    try:
+                        parts = jwt.split(".")
+                        if len(parts) >= 2:
+                            hdr = json_mod.loads(base64.urlsafe_b64decode(parts[0] + "=="))
+                            alg = hdr.get("alg", "?")
+                            if alg in ("ES256", "ES256K", "ES384", "ES512"):
+                                findings.append({
+                                    "layer": "WEB3", "sub": "JWT_ALGORITHM",
+                                    "host": host, "algorithm": alg,
+                                    "risk": "SNDL_VULNERABLE",
+                                    "description": f"JWT with ECDSA algorithm {alg} — quantum-vulnerable",
+                                    "immunefi_relevance": "API authentication uses quantum-vulnerable ECDSA JWT",
+                                    "poc_note": f"JWT header: {str(hdr)[:100]}",
+                                    "remediation": "Migrate to EdDSA (Ed25519) as interim; plan ML-DSA for PQC.",
+                                })
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # 4. Generate CBOM (Cryptographic Bill of Materials) for this endpoint
+    cbom = {
+        "target": base_url,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "crypto_inventory": [],
+        "quantum_readiness": "VULNERABLE" if findings else "UNKNOWN",
+    }
+    for f in findings:
+        cbom["crypto_inventory"].append({
+            "algorithm": f.get("pattern", f.get("sub", "?")),
+            "risk_level": f.get("risk", "?"),
+            "location": f"{host}:{port}",
+        })
+    findings.append({"layer": "WEB3", "sub": "CBOM", "cbom": cbom})
+
+    return findings
+
+
+def audit_web3_source(path: str) -> list:
+    """
+    Capa WEB3 (código): Detecta crypto quantum-vulnerable en código de smart contracts
+    y off-chain code (Solidity, JavaScript, TypeScript, Python).
+
+    Immunefi-relevant: off-chain code de bridges, oracles, APIs.
+    """
+    import re, json as json_mod
+
+    findings = []
+    target = Path(path)
+    if not target.exists():
+        return [{"error": f"Path no existe: {path}"}]
+
+    # Solidity / JavaScript / TypeScript patterns
+    WEB3_CODE_PATTERNS = [
+        (r"secp256k1|SECP256K1", "SNDL_VULNERABLE", "secp256k1 usage — ECDSA, quantum-vulnerable (Shor's algorithm)"),
+        (r"ethers\.utils\.verifyMessage|ethers\.utils\.recoverAddress", "SNDL_VULNERABLE", "ECDSA signature verification — quantum-vulnerable"),
+        (r"ecrecover\s*\(", "SNDL_VULNERABLE", "Solidity ecrecover() — ECDSA recovery, quantum-vulnerable"),
+        (r"keccak256\s*\(", "TRANSITION_REQUIRED", "keccak256 — weakened by Grover's algorithm (128-bit → 64 quantum-bit)"),
+        (r"web3\.eth\.accounts\.sign|signMessage\s*\(", "SNDL_VULNERABLE", "Ethereum account signing — ECDSA secp256k1"),
+        (r"ecdsa\s*\.|ECDSA\s*\.", "SNDL_VULNERABLE", "ECDSA library usage — quantum-vulnerable"),
+        (r"\"alg\"\s*:\s*\"ES256\"", "SNDL_VULNERABLE", "JWT ES256 hardcoded — ECDSA P-256 algorithm"),
+        (r"require\s*\(\s*['\"]elliptic['\"]", "SNDL_VULNERABLE", "elliptic npm package — secp256k1 usage"),
+        (r"from\s+['\"]@noble/secp256k1['\"]", "SNDL_VULNERABLE", "@noble/secp256k1 — ECDSA library"),
+        (r"import\s+.*secp256k1", "SNDL_VULNERABLE", "secp256k1 import detected"),
+        # Positive: PQC usage (informational)
+        (r"ml-kem|mlkem|kyber|dilithium|falcon|sphincs|ml_kem|ML-KEM", "PQ_HYBRID_PRESENT", "PQC algorithm detected — good"),
+    ]
+
+    ext_include = {".sol", ".js", ".ts", ".py", ".go", ".rs", ".java"}
+    files_scanned = 0
+
+    for f in (target.rglob("*") if target.is_dir() else [target]):
+        if f.suffix.lower() not in ext_include or not f.is_file():
+            continue
+        files_scanned += 1
+        try:
+            content = f.read_text(errors="replace")
+            for pattern, risk, desc in WEB3_CODE_PATTERNS:
+                for match in re.finditer(pattern, content, re.IGNORECASE):
+                    line = content[:match.start()].count("\n") + 1
+                    if risk == "PQ_HYBRID_PRESENT":
+                        continue  # Skip positive findings in output (just track)
+                    findings.append({
+                        "layer": "WEB3", "sub": "SOURCE_CODE",
+                        "file": str(f.relative_to(target) if target.is_dir() else f),
+                        "line": line,
+                        "pattern": match.group(0)[:50],
+                        "risk": risk,
+                        "description": desc,
+                        "immunefi_relevance": "Off-chain code with quantum-vulnerable crypto",
+                    })
+        except Exception:
+            pass
+
+    return findings
+
+
 # ─── Capa 9: DOCKER ────────────────────────────────────────────────────────────
 
 def audit_docker_image(image):
@@ -818,7 +1025,8 @@ def build_remediation_plan(findings):
 def main():
     ap = argparse.ArgumentParser(description="pq-audit — Post-Quantum Holistic Security Audit")
     ap.add_argument("--layer", choices=["all", "crypto", "code", "system", "tls", "ssh", "cert",
-                                         "deps", "docker", "network", "software", "cloud", "link"],
+                                         "deps", "docker", "network", "software", "cloud", "link",
+                                         "web3"],  # NEW: DeFi/Immunefi layer
                     default="all")
     ap.add_argument("--target", default=None, help="Path / host / image segun layer")
     ap.add_argument("--host", default=None, help="Host para TLS/SSH audit")
@@ -853,6 +1061,14 @@ def main():
         all_findings.extend(audit_cloud_posture(args.target))
     if args.layer in ("all", "link") and args.target:
         all_findings.extend(audit_link_or_email(args.target))
+    # WEB3 layer — DeFi/Immunefi: off-chain endpoints + source code
+    if args.layer == "web3":
+        if args.host:
+            all_findings.extend(audit_web3_endpoint(args.host, args.port, args.target or "/"))
+        if args.target and Path(args.target).exists():
+            all_findings.extend(audit_web3_source(args.target))
+        if not args.host and not args.target:
+            print("[!] web3 layer requires --host <api-endpoint> or --target <source-dir>")
 
     if not all_findings:
         print("[!] No findings. Check args (--target / --host / --requirements / --file / --image)")
