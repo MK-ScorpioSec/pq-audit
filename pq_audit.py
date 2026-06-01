@@ -7,23 +7,23 @@ Scope: cryptography + code + encryption + systems + dependencies + certificates.
 Adaptive defense: not just isolated weak crypto detection, but end-to-end
 robustness analysis against the post-quantum era (CRQC ~2030s).
 
-Capas auditadas:
- 1. CRYPTO   — primitivas criptograficas en uso (RSA/ECDSA/DH/hash/cipher)
- 2. CODE     — codigo fuente usando cripto debil (grep patterns en repos)
- 3. SYSTEM   — SSH, TLS, PGP, x509 certs en infraestructura
- 4. DEPS     — pip/npm/cargo deps con cripto vulnerable
- 5. DOCKER   — imagenes con cripto/binarios debiles
- 6. NETWORK  — protocolos debiles (FTP/Telnet/HTTP/SMBv1/LDAP/SNMPv1/etc)
- 7. SOFTWARE — firmas digitales en binarios/documentos (.exe/.dll/.docm/.pdf)
- 8. CLOUD    — IaC (Terraform/YAML/JSON) con posturas crypto debiles
- 9. LINK     — URLs de phishing + headers mail (SPF/DKIM/DMARC, DKIM-RSA-SHA1)
+Audit layers:
+ 1. CRYPTO   — cryptographic primitives in use (RSA/ECDSA/DH/hash/cipher)
+ 2. CODE     — source code using weak crypto (grep patterns in repos)
+ 3. SYSTEM   — SSH, TLS, PGP, x509 certs in infrastructure
+ 4. DEPS     — pip/npm/cargo deps with vulnerable crypto
+ 5. DOCKER   — images with weak crypto/binaries
+ 6. NETWORK  — weak protocols (FTP/Telnet/HTTP/SMBv1/LDAP/SNMPv1/etc)
+ 7. SOFTWARE — digital signatures in binaries/documents (.exe/.dll/.docm/.pdf)
+ 8. CLOUD    — IaC (Terraform/YAML/JSON) with weak crypto posture
+ 9. LINK     — phishing URLs + mail headers (SPF/DKIM/DMARC, DKIM-RSA-SHA1)
+10. WEB3     — DeFi/blockchain off-chain components (ECDSA/secp256k1, JWT ES256K, CBOM)
 
-Output: reporte JSON con prioridad de migracion PQC + plan incremental.
+Output: JSON report with PQC migration priority + incremental remediation plan.
 
-Referencia: `devsecops/post-quantum-compliance.md`
-Relacionado: CNSA 2.0 (US 2027 mandatory), NIST FIPS 203/204/205
+Reference: CNSA 2.0 (US 2027 mandatory), NIST FIPS 203/204/205
 
-Uso:
+Usage:
     python3 pq_audit.py --layer all --target /path/to/code
     python3 pq_audit.py --layer system --host example.com
     python3 pq_audit.py --layer deps --requirements requirements.txt
@@ -32,6 +32,7 @@ Uso:
     python3 pq_audit.py --layer software --file sample.exe
     python3 pq_audit.py --layer cloud --target infra/terraform/
     python3 pq_audit.py --layer link --target https://suspicious.example
+    python3 pq_audit.py --layer web3 --host defi-api.example.com
 """
 import argparse
 import json
@@ -45,48 +46,48 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-# ─── Niveles de riesgo PQ ─────────────────────────────────────────────────────
+# ─── PQ Risk Levels ───────────────────────────────────────────────────────────
 RISK_PQ = {
-    "BROKEN_NOW": "Ya roto clasicamente (MD5/SHA-1/RSA<=1024). Urgente.",
-    "SNDL_VULNERABLE": "Store-Now-Decrypt-Later: cosechar ahora, descifrar con CRQC. Alta prioridad si data long-lived.",
-    "TRANSITION_REQUIRED": "Seguro hoy pero vulnerable a CRQC ~2030s. Migrar medio plazo.",
-    "PQ_HYBRID_MISSING": "Usa algoritmo NIST-safe pero sin hybrid PQC. Considerar hybrid.",
+    "BROKEN_NOW": "Classically broken today (MD5/SHA-1/RSA<=1024). Fix immediately.",
+    "SNDL_VULNERABLE": "Store-Now-Decrypt-Later: harvested today, decrypted with CRQC. High priority for long-lived data.",
+    "TRANSITION_REQUIRED": "Secure today but vulnerable to CRQC ~2030s. Migrate medium-term.",
+    "PQ_HYBRID_MISSING": "Uses NIST-safe algorithm but lacks hybrid PQC. Consider hybrid scheme.",
     "PQ_SAFE": "Post-Quantum safe (AES-256, SHA-384+, ML-KEM, ML-DSA, SPHINCS+).",
 }
 
 
-# ─── Capa 1: CRYPTO (primitivas) ──────────────────────────────────────────────
+# ─── Layer 1: CRYPTO (primitives) ──────────────────────────────────────────────
 
 CRYPTO_CATALOG = {
     # hashes
-    "md5": {"risk": "BROKEN_NOW", "replace_with": "SHA-384/SHA-512 o SHA-3"},
-    "sha1": {"risk": "BROKEN_NOW", "replace_with": "SHA-384/SHA-512 o SHA-3"},
-    "sha256": {"risk": "PQ_SAFE", "note": "Aceptable. SHA-384/512 preferido para hash chains forenses long-lived."},
+    "md5": {"risk": "BROKEN_NOW", "replace_with": "SHA-384/SHA-512 or SHA-3"},
+    "sha1": {"risk": "BROKEN_NOW", "replace_with": "SHA-384/SHA-512 or SHA-3"},
+    "sha256": {"risk": "PQ_SAFE", "note": "Acceptable. SHA-384/512 preferred for forensic long-lived hash chains."},
     "sha384": {"risk": "PQ_SAFE"},
     "sha512": {"risk": "PQ_SAFE"},
     "sha3": {"risk": "PQ_SAFE"},
     "blake3": {"risk": "PQ_SAFE"},
-    # ciphers simetricos
+    # symmetric ciphers
     "des": {"risk": "BROKEN_NOW", "replace_with": "AES-256"},
     "3des": {"risk": "BROKEN_NOW", "replace_with": "AES-256"},
     "rc4": {"risk": "BROKEN_NOW", "replace_with": "ChaCha20-Poly1305"},
     "blowfish": {"risk": "BROKEN_NOW", "replace_with": "AES-256"},
-    "aes-128": {"risk": "TRANSITION_REQUIRED", "note": "Grover reduce a 64-bit quantum security. Migrar a AES-256."},
-    "aes-192": {"risk": "PQ_SAFE", "note": "96-bit quantum. Aceptable."},
+    "aes-128": {"risk": "TRANSITION_REQUIRED", "note": "Grover reduces to 64-bit quantum security. Migrate to AES-256."},
+    "aes-192": {"risk": "PQ_SAFE", "note": "96-bit quantum. Acceptable."},
     "aes-256": {"risk": "PQ_SAFE"},
     "chacha20": {"risk": "PQ_SAFE"},
     # asymmetric
     "rsa_1024": {"risk": "BROKEN_NOW"},
-    "rsa_2048": {"risk": "SNDL_VULNERABLE", "replace_with": "Hybrid X25519+ML-KEM o migrar a ML-KEM puro"},
-    "rsa_3072": {"risk": "SNDL_VULNERABLE", "note": "Mejor que 2048 pero no PQ-safe"},
+    "rsa_2048": {"risk": "SNDL_VULNERABLE", "replace_with": "Hybrid X25519+ML-KEM or migrate to pure ML-KEM"},
+    "rsa_3072": {"risk": "SNDL_VULNERABLE", "note": "Better than 2048 but not PQ-safe"},
     "rsa_4096": {"risk": "SNDL_VULNERABLE"},
     "ecdsa_p256": {"risk": "SNDL_VULNERABLE"},
     "ecdsa_p384": {"risk": "SNDL_VULNERABLE"},
     "ecdsa_p521": {"risk": "SNDL_VULNERABLE"},
     "ecdsa_secp192": {"risk": "BROKEN_NOW"},
     "ecdsa_secp224": {"risk": "BROKEN_NOW"},
-    "ed25519": {"risk": "SNDL_VULNERABLE", "note": "Clasico seguro. Migrar a hybrid Ed25519+ML-DSA"},
-    "x25519": {"risk": "SNDL_VULNERABLE", "note": "Migrar a hybrid X25519+ML-KEM"},
+    "ed25519": {"risk": "SNDL_VULNERABLE", "note": "Classically secure. Migrate to hybrid Ed25519+ML-DSA"},
+    "x25519": {"risk": "SNDL_VULNERABLE", "note": "Migrate to hybrid X25519+ML-KEM"},
     "dh_512": {"risk": "BROKEN_NOW"},
     "dh_768": {"risk": "BROKEN_NOW"},
     "dh_1024": {"risk": "SNDL_VULNERABLE"},
@@ -98,38 +99,38 @@ CRYPTO_CATALOG = {
 }
 
 
-# ─── Capa 2: CODE patterns ─────────────────────────────────────────────────────
+# ─── Layer 2: CODE patterns ─────────────────────────────────────────────────────
 
 CODE_PATTERNS = [
-    # Hashes debiles en codigo
+    # Weak hashes in code
     (r'hashlib\.md5\(', "Python hashlib.md5", "BROKEN_NOW"),
     (r'hashlib\.sha1\(', "Python hashlib.sha1", "BROKEN_NOW"),
     (r'MessageDigest\.getInstance\(["\']MD5', "Java MD5", "BROKEN_NOW"),
     (r'MessageDigest\.getInstance\(["\']SHA-?1', "Java SHA-1", "BROKEN_NOW"),
     (r'crypto\.createHash\(["\']md5', "NodeJS md5", "BROKEN_NOW"),
     (r'crypto\.createHash\(["\']sha1', "NodeJS sha1", "BROKEN_NOW"),
-    # Ciphers en codigo
-    (r'Cipher\.getInstance\(["\'](?:DES|DES/|DES_|Blowfish|RC4)', "Java cipher debil", "BROKEN_NOW"),
-    (r'from Crypto\.Cipher import (?:DES|ARC4|Blowfish)', "PyCryptodome cipher debil", "BROKEN_NOW"),
-    # RSA weak en codigo
+    # Weak ciphers in code
+    (r'Cipher\.getInstance\(["\'](?:DES|DES/|DES_|Blowfish|RC4)', "Java weak cipher", "BROKEN_NOW"),
+    (r'from Crypto\.Cipher import (?:DES|ARC4|Blowfish)', "PyCryptodome weak cipher", "BROKEN_NOW"),
+    # Weak RSA in code
     (r'RSA\.generate\(\s*(?:512|768|1024|2048)', "Python RSA.generate<3072", "SNDL_VULNERABLE"),
     (r'keytool.*-keysize\s+(?:512|768|1024|2048)', "keytool RSA weak", "SNDL_VULNERABLE"),
     (r'openssl\s+genrsa\s+(?:512|768|1024|2048)', "openssl RSA weak", "SNDL_VULNERABLE"),
-    # random inseguro
-    (r'\brandom\.random\(\)', "Python random.random (no cripto)", "BROKEN_NOW"),
-    (r'\bMath\.random\(\)', "JS Math.random (no cripto)", "BROKEN_NOW"),
-    # jwt alg none
+    # insecure random
+    (r'\brandom\.random\(\)', "Python random.random (not cryptographic)", "BROKEN_NOW"),
+    (r'\bMath\.random\(\)', "JS Math.random (not cryptographic)", "BROKEN_NOW"),
+    # JWT alg none
     (r'"alg"\s*:\s*"none"', "JWT alg=none", "BROKEN_NOW"),
     # plaintext passwords
     (r'password\s*=\s*["\'][^"\']+["\']', "Password hardcoded", "BROKEN_NOW"),
-    # TLS config weak
-    (r'SSLv(?:2|3)|TLSv?1\.0|TLSv?1\.1', "TLS version obsoleto", "BROKEN_NOW"),
+    # weak TLS config
+    (r'SSLv(?:2|3)|TLSv?1\.0|TLSv?1\.1', "Obsolete TLS version", "BROKEN_NOW"),
     (r'SSL_OP_NO_TLSv1_[23]', "TLS force downgrade", "BROKEN_NOW"),
 ]
 
 
 def audit_crypto_primitives(text_or_file):
-    """Capa 1: detecta primitivas criptograficas usadas."""
+    """Layer 1: detect cryptographic primitives in use."""
     findings = []
     text = text_or_file if isinstance(text_or_file, str) else Path(text_or_file).read_text(errors="replace")
     text_lower = text.lower()
@@ -147,10 +148,10 @@ def audit_crypto_primitives(text_or_file):
 
 
 def audit_code(path):
-    """Capa 2: scan recursivo de codigo."""
+    """Layer 2: recursive source code scan for weak crypto patterns."""
     p = Path(path)
     if not p.exists():
-        return [{"error": f"Path no existe: {path}"}]
+        return [{"error": f"Path not found: {path}"}]
     findings = []
     files = [p] if p.is_file() else list(p.rglob("*"))
     code_exts = {".py", ".js", ".ts", ".java", ".go", ".rb", ".php", ".cs", ".cpp", ".c", ".h", ".rs", ".sh"}
@@ -183,10 +184,10 @@ def audit_code(path):
     return findings
 
 
-# ─── Capa 3: SYSTEM (TLS / SSH / PGP / certs) ─────────────────────────────────
+# ─── Layer 3: SYSTEM (TLS / SSH / PGP / certs) ─────────────────────────────────
 
 def audit_tls(host, port=443):
-    """Capa 3a: TLS/SSL config de un host."""
+    """Layer 3a: TLS/SSL configuration of a host."""
     findings = []
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -221,7 +222,7 @@ def audit_tls(host, port=443):
                         findings.append({
                             "layer": "SYSTEM", "sub": "TLS",
                             "host": f"{host}:{port}",
-                            "description": f"Cipher debil: {cipher_name}",
+                            "description": f"Weak cipher: {cipher_name}",
                             "risk": "BROKEN_NOW",
                         })
                     # PQ hybrid?
@@ -243,7 +244,7 @@ def audit_tls(host, port=443):
 
 
 def audit_ssh_config(host, port=22):
-    """Capa 3b: SSH config (kex algorithms, host keys, ciphers)."""
+    """Layer 3b: SSH configuration (kex algorithms, host keys, ciphers)."""
     findings = []
     try:
         r = subprocess.run(
@@ -252,12 +253,12 @@ def audit_ssh_config(host, port=22):
              "-Q", "kex"],
             capture_output=True, text=True, timeout=15,
         )
-        # Actualmente solo probamos si ssh local soporta PQ. Idealmente scan remoto con ssh-audit.
+        # Currently only tests if local ssh supports PQ. Ideally remote scan with ssh-audit.
         findings.append({
             "layer": "SYSTEM", "sub": "SSH",
             "host": f"{host}:{port}",
             "note": "Usar ssh-audit para analisis completo",
-            "description": "SSH audit requiere ssh-audit tool",
+            "description": "SSH audit requires ssh-audit tool",
             "risk": "TRANSITION_REQUIRED",
         })
     except Exception as e:
@@ -266,7 +267,7 @@ def audit_ssh_config(host, port=22):
 
 
 def audit_x509_cert(cert_path):
-    """Capa 3c: analiza certificado x509."""
+    """Layer 3c: analyze x509 certificate."""
     findings = []
     try:
         # Usamos openssl para inspeccionar
@@ -325,7 +326,7 @@ def audit_x509_cert(cert_path):
     return findings
 
 
-# ─── Capa 4: DEPS ──────────────────────────────────────────────────────────────
+# ─── Layer 4: DEPS ──────────────────────────────────────────────────────────────
 
 WEAK_DEPS = {
     # Python
@@ -341,11 +342,11 @@ WEAK_DEPS = {
 
 
 def audit_deps(requirements_path):
-    """Capa 4: deps con cripto vulnerable."""
+    """Layer 4: dependencies with vulnerable cryptography."""
     findings = []
     p = Path(requirements_path)
     if not p.exists():
-        return [{"error": f"Path no existe: {requirements_path}"}]
+        return [{"error": f"Path not found: {requirements_path}"}]
 
     content = p.read_text(errors="replace")
     for dep, meta in WEAK_DEPS.items():
@@ -361,7 +362,7 @@ def audit_deps(requirements_path):
     return findings
 
 
-# ─── Capa 5: NETWORK ───────────────────────────────────────────────────────────
+# ─── Layer 5: NETWORK ───────────────────────────────────────────────────────────
 
 NETWORK_WEAK_PROTOCOLS = {
     # Protocolos clasicamente rotos
@@ -382,13 +383,13 @@ NETWORK_WEAK_PROTOCOLS = {
     161: ("SNMP v1/v2c", "BROKEN_NOW", "Community strings plaintext."),
     389: ("LDAP plain", "BROKEN_NOW", "Usar LDAPS (636)."),
     445: ("SMB", "TRANSITION_REQUIRED", "Verificar SMBv3 + signing. No exponer publico."),
-    513: ("rlogin", "BROKEN_NOW", "Deprecado hace 30 años."),
+    513: ("rlogin", "BROKEN_NOW", "Deprecated for 30+ years."),
     514: ("rshell", "BROKEN_NOW", "Deprecado."),
     1433: ("MSSQL", "TRANSITION_REQUIRED", "No exponer publico. Solo via VPN + TLS."),
     3306: ("MySQL", "TRANSITION_REQUIRED", "No exponer publico."),
     3389: ("RDP", "TRANSITION_REQUIRED", "Solo via VPN + NLA + MFA. NL3 (NTLM) deprecado."),
     5432: ("PostgreSQL", "TRANSITION_REQUIRED", "No exponer publico. Usar TLS."),
-    5900: ("VNC", "BROKEN_NOW", "Autenticacion debil. Usar por VPN."),
+    5900: ("VNC", "BROKEN_NOW", "Weak authentication. Use over VPN."),
     6379: ("Redis plain", "BROKEN_NOW", "Sin auth por default, sin TLS."),
     9200: ("Elasticsearch", "BROKEN_NOW", "Sin auth historicamente. Verificar security plugin."),
     11211: ("Memcached", "BROKEN_NOW", "Sin auth. UDP amplification DDoS."),
@@ -397,7 +398,7 @@ NETWORK_WEAK_PROTOCOLS = {
 
 
 def audit_network(host, ports=None, timeout=2):
-    """Capa 5: scan de puertos debiles/expuestos."""
+    """Layer 5: scan for weak/exposed protocols."""
     findings = []
     target_ports = ports if ports else list(NETWORK_WEAK_PROTOCOLS.keys())
 
@@ -433,31 +434,31 @@ def audit_network(host, ports=None, timeout=2):
         pass
 
     # IKE/IPsec (VPN) PQ considerations
-    # (placeholder — requiere ike-scan)
+    # (placeholder — requires ike-scan)
     findings.append({
         "layer": "NETWORK",
         "host": host,
         "description": "VPN IKE PQ readiness check pendiente (IKEv2 + hybrid PQ KE)",
         "risk": "SNDL_VULNERABLE",
-        "note": "RFC 9370 (IKEv2 PQ hybrid KE) para migracion VPN",
+        "note": "RFC 9370 (IKEv2 PQ hybrid KE) for VPN migration",
     })
 
     return findings
 
 
-# ─── Capa 6: SOFTWARE (documentos, ejecutables, archivos) ─────────────────────
+# ─── Layer 6: SOFTWARE (documents, executables, files) ─────────────────────────
 
 SUSPICIOUS_FILE_EXTS = {
     # Ejecutables
-    ".exe": "Windows executable — verificar firma digital",
-    ".dll": "Windows library — verificar firma y version",
+    ".exe": "Windows executable — verify digital signature",
+    ".dll": "Windows library — verify signature and version",
     ".msi": "Windows installer",
     ".scr": "Screen saver — vector comun malware",
     ".bat": "Batch script — inspeccionar antes de ejecutar",
-    ".ps1": "PowerShell script — verificar signing + ExecutionPolicy",
+    ".ps1": "PowerShell script — verify signing + ExecutionPolicy",
     ".vbs": "VBScript — a menudo malicioso",
     ".hta": "HTA — vector phishing",
-    ".jar": "Java archive — verificar firma",
+    ".jar": "Java archive — verify signature",
     # Documentos con macros
     ".docm": "Word con macros — alto riesgo",
     ".xlsm": "Excel con macros — alto riesgo",
@@ -465,23 +466,23 @@ SUSPICIOUS_FILE_EXTS = {
     ".dotm": "Word template con macros",
     # Archivos contenedores
     ".zip": "Verificar contenido antes de abrir",
-    ".rar": "RAR — verificar",
+    ".rar": "RAR — verify",
     ".7z": "Compressed",
-    ".iso": "Disk image — verificar firma / hash",
+    ".iso": "Disk image — verify signature / hash",
     ".img": "Disk image",
     # PDFs — pueden contener JS
-    ".pdf": "PDF — verificar JS/forms/attachments",
+    ".pdf": "PDF — verify JS/forms/attachments",
 }
 
 
 def audit_software_file(path):
-    """Capa 6: analizar archivo/software individual."""
+    """Layer 6: analyze individual file/software artifact."""
     findings = []
     p = Path(path)
     if not p.exists():
-        return [{"error": f"Path no existe: {path}"}]
+        return [{"error": f"Path not found: {path}"}]
     if not p.is_file():
-        return [{"error": "No es archivo"}]
+        return [{"error": "Not a file"}]
 
     ext = p.suffix.lower()
     size = p.stat().st_size
@@ -521,7 +522,7 @@ def audit_software_file(path):
             "file": str(p),
             "description": "Authenticode signature check — usar sigcheck / osslsigncode",
             "risk": "TRANSITION_REQUIRED",
-            "note": "Migrar a PQ-hardened code signing (sigstore + ML-DSA en roadmap)",
+            "note": "Migrate to PQ-hardened code signing (sigstore + ML-DSA on roadmap)",
         })
 
     if ext in {".pdf"}:
@@ -563,19 +564,19 @@ def audit_software_file(path):
     return findings
 
 
-# ─── Capa 7: CLOUD posture ────────────────────────────────────────────────────
+# ─── Layer 7: CLOUD posture ─────────────────────────────────────────────────────
 
 def audit_cloud_posture(config_path):
-    """Capa 7: revisa configs cloud IaC (terraform, cloudformation, yaml) con PQ focus."""
+    """Layer 7: review cloud IaC configs (terraform, cloudformation, yaml) with PQ focus."""
     findings = []
     p = Path(config_path)
     if not p.exists():
-        return [{"error": f"Path no existe: {config_path}"}]
+        return [{"error": f"Path not found: {config_path}"}]
 
     cloud_patterns = [
         # TLS policies
         (r'(?i)ssl_policy.*ELBSecurityPolicy-201[0-6]', "AWS ELB TLS policy obsoleta", "BROKEN_NOW"),
-        (r'(?i)(min.?tls.?version|tls_policy|ssl_policy)\s*[=:]\s*["\']?.*1\.[01]["\']?', "Min TLS 1.0/1.1 configurado", "BROKEN_NOW"),
+        (r'(?i)(min.?tls.?version|tls_policy|ssl_policy)\s*[=:]\s*["\']?.*1\.[01]["\']?', "Min TLS 1.0/1.1 configured", "BROKEN_NOW"),
         # KMS key specs
         (r'customer_master_key_spec.*RSA_2048', "KMS RSA 2048 (SNDL)", "SNDL_VULNERABLE"),
         (r'customer_master_key_spec.*ECC_SECG_P256K1', "KMS ECC no-FIPS", "TRANSITION_REQUIRED"),
@@ -590,7 +591,7 @@ def audit_cloud_posture(config_path):
         (r'acl\s*=\s*["\']public-read', "S3 ACL public-read", "BROKEN_NOW"),
         # Unrestricted SG
         (r'cidr_blocks\s*=\s*\[["\']0\.0\.0\.0/0["\']\]', "SG con 0.0.0.0/0", "SNDL_VULNERABLE"),
-        # Password policy debil
+        # Weak password policy
         (r'require_symbols\s*=\s*false', "IAM password policy sin simbolos", "TRANSITION_REQUIRED"),
     ]
 
@@ -631,7 +632,7 @@ def audit_cloud_posture(config_path):
     return findings
 
 
-# ─── Capa 8: LINKS / EMAILS (phishing + weak crypto) ──────────────────────────
+# ─── Layer 8: LINKS / EMAILS (phishing + weak crypto) ──────────────────────────
 
 SUSPICIOUS_URL_PATTERNS = [
     (r"http://[^/]+/(?:login|admin|signin|auth)", "Login sin HTTPS", "BROKEN_NOW"),
@@ -653,11 +654,11 @@ EMAIL_HEADER_CHECKS = [
 
 
 def audit_link_or_email(target):
-    """Capa 8: analiza URL, email raw, o archivo con links."""
+    """Layer 8: analyze URL, raw email, or file with links."""
     findings = []
     text = ""
 
-    # Puede ser URL directo, archivo email (.eml) o archivo con links
+    # Can be a direct URL, email file (.eml) or file with links
     if os.path.isfile(target):
         try:
             text = Path(target).read_text(errors="replace")
@@ -722,12 +723,12 @@ def audit_link_or_email(target):
     return findings
 
 
-# ─── Capa 10: WEB3 / DeFi ────────────────────────────────────────────────────
-# Immunefi-ready: audita endpoints off-chain de protocolos DeFi.
-# Scope: TLS/crypto en APIs, JWT algorithms, RPC endpoints, ECDSA en smart contracts.
-# NOTA: Solo ejecutar contra targets IN SCOPE del programa de bug bounty.
-#       No ejecutar contra contratos en mainnet sin autorización explícita.
-#       Immunefi acepta research con PoC; NO acepta scanner dumps.
+# ─── Layer 10: WEB3 / DeFi ──────────────────────────────────────────────────────
+# Immunefi-ready: audits off-chain endpoints of DeFi protocols.
+# Scope: TLS/crypto in APIs, JWT algorithms, RPC endpoints, ECDSA in smart contracts.
+# NOTE: Only run against targets IN SCOPE of the bug bounty program.
+#       Do not run against mainnet contracts without explicit authorization.
+#       Immunefi accepts research with PoC; does NOT accept scanner dumps.
 
 WEB3_QUANTUM_PATTERNS = {
     # ECDSA/secp256k1 is quantum-vulnerable (Shor's algorithm breaks it)
@@ -745,8 +746,8 @@ WEB3_QUANTUM_PATTERNS = {
 
 def audit_web3_endpoint(host: str, port: int = 443, rpc_path: str = "/") -> list:
     """
-    Capa WEB3: Audita endpoints off-chain de protocolos DeFi para vulnerabilidades
-    criptográficas cuánticas.
+    WEB3 Layer: Audita endpoints off-chain de protocolos DeFi para vulnerabilidades
+    cryptographic quantum vulnerabilities.
 
     Checks:
     1. TLS crypto (secp256r1 vs ML-KEM readiness)
@@ -872,17 +873,17 @@ def audit_web3_endpoint(host: str, port: int = 443, rpc_path: str = "/") -> list
 
 def audit_web3_source(path: str) -> list:
     """
-    Capa WEB3 (código): Detecta crypto quantum-vulnerable en código de smart contracts
+    WEB3 Layer (source): Detects quantum-vulnerable crypto in smart contract source code
     y off-chain code (Solidity, JavaScript, TypeScript, Python).
 
-    Immunefi-relevant: off-chain code de bridges, oracles, APIs.
+    Immunefi-relevant: off-chain code for bridges, oracles, APIs.
     """
     import re, json as json_mod
 
     findings = []
     target = Path(path)
     if not target.exists():
-        return [{"error": f"Path no existe: {path}"}]
+        return [{"error": f"Path not found: {path}"}]
 
     # Solidity / JavaScript / TypeScript patterns
     WEB3_CODE_PATTERNS = [
@@ -929,10 +930,10 @@ def audit_web3_source(path: str) -> list:
     return findings
 
 
-# ─── Capa 9: DOCKER ────────────────────────────────────────────────────────────
+# ─── Layer 9: DOCKER ────────────────────────────────────────────────────────────
 
 def audit_docker_image(image):
-    """Capa 5: scan de imagen Docker — labels cripto debil + Docker Scout CVEs (si disponible)."""
+    """Layer 9: scan Docker image — weak crypto labels + Docker Scout CVEs (if available)."""
     findings = []
     # Labels check
     try:
@@ -946,12 +947,12 @@ def audit_docker_image(image):
                         "layer": "DOCKER", "image": image,
                         "field": f"label.{k}", "value": str(v)[:100],
                         "risk": "BROKEN_NOW",
-                        "description": "Label con referencia a algoritmo cripto debil",
+                        "description": "Label referencing weak crypto algorithm",
                     })
     except Exception as e:
         findings.append({"layer": "DOCKER", "error": str(e)})
 
-    # Docker Scout CVE scan (opcional — requiere docker scout plugin)
+    # Docker Scout CVE scan (optional — requires docker scout plugin)
     try:
         scout = subprocess.run(
             ["docker", "scout", "cves", "--format", "sarif", image],
@@ -964,7 +965,7 @@ def audit_docker_image(image):
                     for result in run.get("results", []):
                         rule_id = result.get("ruleId", "")
                         msg = result.get("message", {}).get("text", "")
-                        # Solo reportar CVEs relacionados con cripto
+                        # Only report crypto-related CVEs
                         if any(kw in msg.lower() for kw in ["crypto", "ssl", "tls", "cipher",
                                                               "rsa", "sha", "md5", "openssl"]):
                             findings.append({
@@ -986,7 +987,7 @@ def audit_docker_image(image):
 # ─── Plan de remediacion ───────────────────────────────────────────────────────
 
 def build_remediation_plan(findings):
-    """Genera plan de migracion priorizado."""
+    """Generate prioritized migration plan."""
     by_risk = {"BROKEN_NOW": [], "SNDL_VULNERABLE": [], "TRANSITION_REQUIRED": [], "PQ_HYBRID_MISSING": []}
     for f in findings:
         risk = f.get("risk", "")
@@ -1008,7 +1009,7 @@ def build_remediation_plan(findings):
         },
         "medium_term_transition": {
             "deadline": "12-24 meses",
-            "rationale": "Migrar a PQ hybrid o primitivas mas fuertes antes 2030.",
+            "rationale": "Migrate to PQ hybrid or stronger primitives before 2030.",
             "count": len(by_risk["TRANSITION_REQUIRED"]),
         },
         "long_term_hybrid": {
