@@ -1,5 +1,10 @@
 # pq-audit
 
+<p align="center">
+<img src="assets/banner.png" alt="pq-audit — Post-Quantum Cryptography Audit Framework. 10 layers, NIST FIPS 203/204/205 compliance. Banner generated with AI assistance." width="100%" />
+<br><sub>Banner generated with AI assistance · MK ScorpioSec</sub>
+</p>
+
 **Post-Quantum Holistic Security Audit**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-D62828?style=flat-square)](LICENSE)
