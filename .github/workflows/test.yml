@@ -9,10 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        run: |
-          git clone "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" .
-          git checkout ${{ github.sha }}
+      - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
