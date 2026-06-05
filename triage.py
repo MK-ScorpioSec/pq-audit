@@ -3,7 +3,7 @@
 pq_audit_triage.py — FP triage for pq-audit findings using RAG + CVE context
 MK ScorpioSec | 2026-06-04
 
-Uses Qdrant RAG (threat_intel_kb) to validate if a finding is:
+Uses Qdrant RAG (optional) to validate if a finding is:
 - TRUE POSITIVE: pattern confirmed by CVE/NIST/vendor docs in RAG
 - NEEDS REVIEW: pattern found but no corroborating evidence in RAG
 - LIKELY FP: pattern matches but context indicates it's intentional/test
@@ -51,7 +51,7 @@ def embed_text(text: str) -> list[float]:
         return []
 
 
-def rag_lookup(query: str, collection: str = "threat_intel_kb", limit: int = 3) -> list[dict]:
+def rag_lookup(query: str, collection: str = "pq_audit_kb", limit: int = 3) -> list[dict]:
     """Semantic search in Qdrant for corroborating evidence."""
     vector = embed_text(query)
     if not vector:
