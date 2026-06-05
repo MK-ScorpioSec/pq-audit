@@ -39,15 +39,76 @@ A multi-layer security audit framework that evaluates cryptographic posture, inf
 
 ---
 
+## Demo
+
+![pq-audit demo](assets/demo.gif)
+
+---
+
 ## Installation
 
-> Coming soon — package will be available via `pip install pq-audit`
+**Requirements**: Python 3.10+ | Zero external dependencies for core layers
 
 ```bash
-# From source
+# Option 1: Clone and run directly (no install needed)
 git clone https://github.com/mk-scorpiosec/pq-audit.git
 cd pq-audit
-pip install -r requirements.txt
+python3 pq_audit.py --help
+
+# Option 2: Install optional dependencies for enhanced scanning
+pip install cryptography paramiko requests  # enables more detection methods
+```
+
+**No pip install required** — `pq_audit.py` is a single-file script with zero mandatory external deps.
+
+---
+
+## Quick Start
+
+```bash
+# Scan source code for weak crypto
+python3 pq_audit.py --layer code --target ./my-project/
+
+# Audit TLS configuration of a live host
+python3 pq_audit.py --layer tls --host example.com --port 443
+
+# Check IaC (Terraform/CloudFormation) posture
+python3 pq_audit.py --layer cloud --target ./terraform/
+
+# NEW: Audit DeFi/blockchain off-chain endpoints (Immunefi-ready)
+python3 pq_audit.py --layer web3 --host api.defi-protocol.example.com
+
+# Run all 10 layers against a full project
+python3 pq_audit.py --layer all --target ./repo/ --host myapp.example.com
+
+# JSON output for SIEM/pipeline integration
+python3 pq_audit.py --layer tls --host example.com --json > findings.json
+```
+
+## Example Output
+
+```
+{
+  "findings": [
+    {
+      "layer": "SYSTEM",
+      "risk": "BROKEN_NOW",
+      "description": "TLS 1.0/1.1 enabled — broken by classical standards today",
+      "file": "azure/app_service.tf",
+      "line": 29
+    },
+    {
+      "layer": "WEB3",
+      "risk": "SNDL_VULNERABLE",
+      "description": "secp256k1 — ECDSA curve used in Ethereum. Quantum-vulnerable (CNSA 2.0: migrate by 2030)",
+      "immunefi_relevance": "Off-chain API with quantum-vulnerable ECDSA signatures"
+    }
+  ],
+  "remediation_plan": {
+    "immediate_actions_broken": { "deadline": "30 days", "count": 1 },
+    "short_term_sndl": { "deadline": "6-12 months", "count": 1 }
+  }
+}
 ```
 
 ---
@@ -101,11 +162,25 @@ python pq_audit.py --layer code --target . --ci --fail-on BROKEN_NOW
 
 ---
 
+## FP Triage Pipeline
+
+`triage.py` — validate findings against a RAG knowledge base before reporting:
+
+```bash
+# Scan
+python3 pq_audit.py --layer cloud --target ./terraform --output findings.json
+
+# Triage: classify each finding as TRUE_POSITIVE / NEEDS_REVIEW / LIKELY_FP
+python3 triage.py --input findings.json --output triage_report.json --context ./terraform
+```
+
+The triage pipeline uses semantic search against a local Qdrant knowledge base to corroborate findings. Context-aware: `/test/`, `/demo/`, `/lab/` paths score as LIKELY_FP; `/prod/`, `/main/`, cloud provider paths score as TRUE_POSITIVE.
+
+---
+
 ## Research
 
-This tool was used in live IaC security research against [TerraGoat](https://github.com/bridgecrewio/terragoat) (Bridgecrew's deliberately vulnerable Terraform repo). Results published in [mk-scorpiosec/research](https://github.com/mk-scorpiosec/research).
-
-Key finding from the research: `app_service.tf:29` — Azure minimum TLS 1.0/1.1 — classified as `BROKEN_NOW` by pq-audit but missed by Trivy and Checkov's standard severity tiers, as they lack a quantum/cryptographic readiness dimension.
+**Series #1 — TerraGoat** ([bridgecrewio/terragoat](https://github.com/bridgecrewio/terragoat)): 4 pq-audit findings on Bridgecrew's deliberately vulnerable Terraform repo. Trivy found 243 findings on the same codebase — zero crypto/TLS overlap. Results: [mk-scorpiosec/research](https://github.com/mk-scorpiosec/research).
 
 ---
 

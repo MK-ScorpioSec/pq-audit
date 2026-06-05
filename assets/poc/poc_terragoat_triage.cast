@@ -1,0 +1,12 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1780543613, "env": {"SHELL": "/usr/bin/zsh", "TERM": null}, "title": "pq-audit: TerraGoat v3 — 4 findings, 0 FP (triage validated)"}
+[0.018748, "o", "=== pq-audit TerraGoat — v2 findings (published 2026) ===\r\n  [BROKEN_NOW]      azure/app_service.tf:29 — Min TLS 1.0/1.1\r\n  [SNDL_VULNERABLE] aws/db-app.tf:150       — SG 0.0.0.0/0\r\n  Total: 2 findings\r\n"]
+[1.028677, "o", "\r\n=== pq-audit v3 (updated patterns) ===\r\n"]
+[1.106535, "o", "  File \u001b[35m\"<string>\"\u001b[0m, line \u001b[35m8\u001b[0m\r\n    print(f'\\033[{color}m[{risk}]\\033[0m {f[\u001b[1;31mchr(34)description\u001b[0m{chr(34)}]}')\r\n                                            \u001b[1;31m^^^^^^^^^^^^^^^^^^\u001b[0m\r\n\u001b[1;35mSyntaxError\u001b[0m: \u001b[35minvalid syntax. Perhaps you forgot a comma?\u001b[0m\r\n"]
+[2.279377, "o", "\r\n=== FP Triage ===\r\n"]
+[2.455149, "o", "[triage] Processing 4 findings from /tmp/pq_terragoat_fresh.json\r\n"]
+[3.23982, "o", "  🔴 [TRUE_POSITIVE] Vault PKI RSA key type (SNDL)\r\n"]
+[4.467404, "o", "  🔴 [TRUE_POSITIVE] Min TLS 1.0/1.1 configured\r\n"]
+[5.213636, "o", "  🔴 [TRUE_POSITIVE] SG con 0.0.0.0/0\r\n"]
+[5.659959, "o", "  🔴 [TRUE_POSITIVE] S3 ACL public-read\r\n"]
+[5.664747, "o", "\r\n[triage] Summary: 4 TRUE_POSITIVE | 0 NEEDS_REVIEW | 0 LIKELY_FP\r\n[triage] FP rate estimate: 0%\r\n[triage] Report saved: /tmp/poc_triage_result.json\r\n"]
+[5.692885, "o", "\r\nResult: 4/4 TRUE_POSITIVE | FP rate: 0%\r\n"]

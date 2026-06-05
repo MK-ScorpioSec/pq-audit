@@ -593,6 +593,35 @@ def audit_cloud_posture(config_path):
         (r'cidr_blocks\s*=\s*\[["\']0\.0\.0\.0/0["\']\]', "SG con 0.0.0.0/0", "SNDL_VULNERABLE"),
         # Weak password policy
         (r'require_symbols\s*=\s*false', "IAM password policy sin simbolos", "TRANSITION_REQUIRED"),
+        # HashiCorp Vault PKI — RSA key generation (SNDL risk)
+        (r'(?i)key_type\s*=\s*["\']*rsa["\']*', "Vault PKI RSA key type (SNDL)", "SNDL_VULNERABLE"),
+        (r'(?i)key_bits\s*=\s*["\']*2048["\']*', "Vault PKI RSA-2048 (SNDL)", "SNDL_VULNERABLE"),
+        (r'(?i)key_bits\s*=\s*["\']*1024["\']*', "Vault PKI RSA-1024 (BROKEN)", "BROKEN_NOW"),
+        # Kubernetes TLS secrets with RSA
+        (r'(?i)tls\.crt.*rsa', "K8s TLS cert RSA detected", "SNDL_VULNERABLE"),
+        # NGINX ingress controller TLS
+        (r'(?i)ssl.protocols.*[^TLS13]TLSv1\.2.*[^TLS13]', "NGINX ingress TLS 1.2 only (SNDL)", "SNDL_VULNERABLE"),
+        # cert-manager ClusterIssuer RSA
+        (r'(?i)privateKey.*size.*2048', "cert-manager RSA-2048 private key", "SNDL_VULNERABLE"),
+        (r'(?i)algorithm.*RSA', "cert-manager RSA algorithm", "SNDL_VULNERABLE"),
+        # HashiCorp Vault Helm chart — TLS disabled by default (BROKEN_NOW)
+        (r'(?i)tlsDisable\s*:\s*true', "Vault Helm: TLS disabled (no encryption in transit)", "BROKEN_NOW"),
+        (r'(?i)tls_disable\s*[=:]\s*(1|true)', "Vault HCL: tls_disable=1 (plaintext listener)", "BROKEN_NOW"),
+        # Vault listener with RSA cert (SNDL)
+        (r'(?i)tls_cert_file.*\.crt', "Vault TLS cert configured — verify key algorithm (SNDL if RSA)", "SNDL_VULNERABLE"),
+        # Vault audit log disabled
+        (r'(?i)audit.*enable.*false|audit.*disabled', "Vault audit log disabled (compliance gap)", "TRANSITION_REQUIRED"),
+        # Vault auto-unseal without PQC-safe KMS
+        (r'(?i)awskms.*key_id\s*=', "Vault auto-unseal via AWS KMS RSA (SNDL)", "SNDL_VULNERABLE"),
+        # Helm chart — no network policy (crypto traffic uncontrolled)
+        (r'(?i)networkPolicy.*enabled\s*:\s*false', "Vault network policy disabled", "TRANSITION_REQUIRED"),
+        # PostgreSQL / database TLS disabled
+        (r'(?i)sslmode\s*=\s*disable', "PostgreSQL sslmode=disable (plaintext DB connection)", "BROKEN_NOW"),
+        (r'(?i)ssl\s*=\s*(0|false|off|no)', "Database SSL disabled in connection string", "BROKEN_NOW"),
+        # Kubernetes secrets — unencrypted etcd
+        (r'(?i)encryptionConfig.*identity', "K8s etcd encryption: identity provider (plaintext)", "BROKEN_NOW"),
+        # ArgoCD / GitOps TLS
+        (r'(?i)server\.insecure\s*:\s*true', "ArgoCD server insecure mode (no TLS)", "BROKEN_NOW"),
     ]
 
     NON_IAC = {"package-lock.json", "package.json", "yarn.lock", "composer.lock", "Pipfile.lock", "poetry.lock", "Gemfile.lock", "cargo.lock"}
