@@ -1,7 +1,12 @@
 name: Security Scan
+
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 2 * * 1'
 
 jobs:
   security:
@@ -9,33 +14,59 @@ jobs:
     permissions:
       contents: read
       security-events: write
+
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-      - name: TruffleHog — secret scan
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
-            | sh -s -- -b /usr/local/bin
-          trufflehog git file://. --since-commit HEAD~1 --only-verified --fail || true
+    - name: TruffleHog — secret scan
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+          | sh -s -- -b /usr/local/bin
+        trufflehog git file://. --since-commit HEAD~1 --only-verified --fail || true
 
-      - name: Bandit — Python security
-        run: |
-          pip install bandit --quiet
-          if find . -name "*.py" | grep -q .; then
-            bandit -r . -ll -f json | tee bandit-results.json
-            python3 -c "
-          import json, sys
-          try:
-            d = json.load(open('bandit-results.json'))
-            highs = [r for r in d.get('results',[]) if r['issue_severity'] in ['HIGH','CRITICAL']]
-            if highs:
-              print(f'FAIL: {len(highs)} HIGH/CRITICAL findings')
-              sys.exit(1)
-            print('PASS')
-          except: print('PASS')
-          "
-          else
-            echo 'No Python files to scan'
-          fi
+    - name: Bandit — Python security
+      run: |
+        pip install bandit --quiet
+        if find . -name "*.py" | grep -q .; then
+          bandit -r . -ll -f json | tee bandit-results.json
+          python3 -c "
+import json, sys
+try:
+  d = json.load(open('bandit-results.json'))
+  highs = [r for r in d.get('results',[]) if r['issue_severity'] in ['HIGH','CRITICAL']]
+  if highs:
+    print(f'FAIL: {len(highs)} HIGH/CRITICAL findings')
+    sys.exit(1)
+  print('PASS')
+except: print('PASS')
+"
+        else
+          echo 'No Python files to scan'
+        fi
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: python
+        queries: security-extended
+
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: /language:python
