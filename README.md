@@ -197,6 +197,7 @@ The triage pipeline uses semantic search against a local Qdrant knowledge base t
 | NIST FIPS 204 (ML-DSA / Dilithium) | Digital signature algorithm audit |
 | NIST FIPS 205 (SLH-DSA / SPHINCS+) | Hash-based signature detection |
 | NIST SP 800-131A | Deprecated algorithm identification |
+| NSA CNSA 2.0 (2027 deadline) | Migration SLA / compliance timeline reference |
 | DORA / NIS2 | Cryptographic control gap analysis |
 
 ---
